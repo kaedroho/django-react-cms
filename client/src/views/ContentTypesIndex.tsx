@@ -88,7 +88,6 @@ export default function ContentTypesIndexView({
                   </Button>
                   <IconButton
                     size="sm"
-                    color="danger"
                     aria-label={`Delete ${contentType.name}`}
                     onClick={() => openInModal(contentType.delete_url, "right")}
                   >

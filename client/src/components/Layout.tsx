@@ -56,6 +56,7 @@ const UnsavedChangesWarningWrapper = styled.div`
 
 interface LayoutProps {
   title: string;
+  subtitle?: React.ReactNode;
   breadcrumb?: {
     label: string;
     href?: string;
@@ -67,6 +68,7 @@ interface LayoutProps {
 
 export default function Layout({
   title,
+  subtitle,
   breadcrumb = [],
   renderHeaderButtons,
   hideHomeBreadcrumb,
@@ -201,7 +203,8 @@ export default function Layout({
           >
             <Box sx={{
               pb: 2,
-              borderBottom: "1px solid var(--joy-palette-divider)"
+              backgroundColor: "background.body",
+              borderBottom: "1px solid var(--joy-palette-divider)",
             }}>
               <Box sx={{
                 display: "flex",
@@ -211,7 +214,16 @@ export default function Layout({
                   size="sm"
                   aria-label="breadcrumbs"
                   separator={<ChevronRightRoundedIcon />}
-                  sx={{ pl: 1, minHeight: "34px" }}
+                  sx={{
+                    pl: 2,
+                    minHeight: "34px",
+                    // The home icon, the chevrons and the labels are three
+                    // different box types; without this they each sit on
+                    // their own baseline.
+                    "--Breadcrumbs-gap": "6px",
+                    "& li": { display: "flex", alignItems: "center" },
+                    "& svg": { fontSize: "16px" },
+                  }}
                 >
                   {!hideHomeBreadcrumb && (
                     <Link
@@ -224,7 +236,9 @@ export default function Layout({
                       <HomeRoundedIcon />
                     </Link>
                   )}
-                  {breadcrumb.map(({ label, href }) =>
+                  {breadcrumb
+                    .filter(({ label }) => label !== "")
+                    .map(({ label, href }) =>
                     href ? (
                       <Link
                         component={DjangoBridgeLink}
@@ -242,6 +256,7 @@ export default function Layout({
                         color="primary"
                         fontWeight={500}
                         fontSize={12}
+                        key={label}
                       >
                         {label}
                       </Typography>
@@ -261,9 +276,12 @@ export default function Layout({
                   px: 2,
                 }}
               >
-                <Typography level="h3" component="h1">
-                  {title}
-                </Typography>
+                <Box>
+                  <Typography level="h3" component="h1">
+                    {title}
+                  </Typography>
+                  {subtitle}
+                </Box>
                 {renderHeaderButtons && renderHeaderButtons()}
               </Box>
             </Box>

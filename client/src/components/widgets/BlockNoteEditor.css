@@ -1,5 +1,9 @@
 @media (min-width: 900px) {
+    /* BlockNote's own inline padding is large and was zeroed here so the body
+       text lined up with the (then borderless) title. Now that every field
+       carries a hairline border, match the 12px the other inputs use so the
+       text sits off the edge and still aligns down the column. */
     .bn-editor {
-        padding-inline: 0;
+        padding-inline: 12px;
     }
 }

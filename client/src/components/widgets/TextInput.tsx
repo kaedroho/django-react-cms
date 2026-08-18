@@ -19,11 +19,22 @@ export default function TextInput({
   if (avariant === "large") {
     sx = {
       ...sx,
-      border: "none",
+      // Big type, but still visibly a field: a hairline edge that firms up on
+      // hover and focus. Fully borderless left people unsure it was editable,
+      // and it didn't line up with the inputs below it.
+      "--Input-minHeight": "auto",
+      border: "1px solid",
+      borderColor: "neutral.outlinedBorder",
       boxShadow: "none",
       background: "none",
-      fontSize: { xs: "30px", sm: "30px", md: "48px" },
+      fontSize: { xs: "28px", sm: "32px", md: "40px" },
       fontWeight: 700,
+      lineHeight: 1.2,
+      py: 1,
+      "&:hover": { borderColor: "neutral.outlinedHoverBorder" },
+      "&:focus-within": {
+        borderColor: "primary.outlinedBorder",
+      },
     };
   }
 

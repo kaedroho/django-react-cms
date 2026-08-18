@@ -10,7 +10,18 @@ import {
   lightDefaultTheme,
 } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
+import styled from "styled-components";
 import "./BlockNoteEditor.css";
+
+const BlockNoteEditorFrame = styled.div`
+  border: 1px solid var(--joy-palette-neutral-outlinedBorder);
+  border-radius: var(--joy-radius-sm, 6px);
+  padding: 8px 0;
+
+  &:focus-within {
+    border-color: var(--joy-palette-primary-outlinedBorder);
+  }
+`;
 
 const lightTheme = {
   ...lightDefaultTheme,
@@ -57,6 +68,9 @@ export default function BlockNoteEditor({
     <>
       <input type="hidden" name={name} value={JSON.stringify(blocks)} />
       {dirty && <DirtyFormMarker />}
+      {/* Matches the hairline on the other inputs, so the form reads as one
+          set of fields rather than a mix of boxes and bare text. */}
+      <BlockNoteEditorFrame>
       <BlockNoteView
         editor={editor}
         onChange={() => {
@@ -68,6 +82,7 @@ export default function BlockNoteEditor({
           dark: darkTheme,
         }}
       />
+      </BlockNoteEditorFrame>
     </>
   );
 }

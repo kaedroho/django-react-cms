@@ -63,6 +63,14 @@ export default function PagesIndexView({
   return (
     <Layout
       title={parent ? parent.title : "Pages"}
+      subtitle={
+        <Typography
+          level="body-xs"
+          sx={{ fontFamily: "monospace", mt: 0.25 }}
+        >
+          {parent_path}
+        </Typography>
+      }
       breadcrumb={crumbs}
       renderHeaderButtons={() => (
         <Box display="flex" gap={1} alignItems="center">
@@ -91,12 +99,6 @@ export default function PagesIndexView({
       )}
       fullWidth
     >
-      <Box sx={{ px: { xs: 2, md: 6 }, pt: 1 }}>
-        <Typography level="body-xs" sx={{ fontFamily: "monospace" }}>
-          {parent_path}
-        </Typography>
-      </Box>
-
       {!has_content_types && (
         <Box sx={{ px: { xs: 2, md: 6 }, py: 4 }}>
           <Typography level="body-md">
@@ -123,6 +125,18 @@ export default function PagesIndexView({
       {!!pages.length && (
         <Table
           sx={{
+            // The page header above already supplies the one dividing line.
+            // A filled table head would read as a second, competing band, so
+            // the column labels carry themselves with type instead.
+            "--TableCell-headBackground": "transparent",
+            "& thead th": {
+              fontSize: "11px",
+              fontWeight: 600,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              color: "text.tertiary",
+              verticalAlign: "middle",
+            },
             "& tr > td:first-child": { paddingLeft: { xs: 2, md: 6 } },
             "& tr > th:first-child": { paddingLeft: { xs: 2, md: 6 } },
             "& tr > td:last-child": { paddingRight: { xs: 2, md: 6 } },
@@ -132,11 +146,11 @@ export default function PagesIndexView({
           <thead>
             <tr>
               <th>Title</th>
-              <th style={{ width: "16%" }}>Type</th>
-              <th style={{ width: "13%" }}>Status</th>
-              <th style={{ width: "13%" }}>Children</th>
-              <th style={{ width: "13%" }}>Updated</th>
-              <th style={{ width: "140px" }} aria-label="Actions" />
+              <th style={{ width: "14%" }}>Type</th>
+              <th style={{ width: "11%" }}>Status</th>
+              <th style={{ width: "10%" }}>Children</th>
+              <th style={{ width: "11%" }}>Updated</th>
+              <th style={{ width: "124px" }} aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
@@ -161,23 +175,28 @@ export default function PagesIndexView({
                   <StatusChip status={page.status} label={page.status_label} />
                 </td>
                 <td>
-                  {page.child_count ? (
-                    <Link
-                      component={DjangoBridgeLink}
-                      href={page.children_url}
-                      level="body-sm"
+                  {/*
+                    Always navigable, even at zero. This used to render an
+                    em-dash for childless pages, which made them impossible to
+                    browse into --- and therefore impossible to add a child to.
+                  */}
+                  <Link
+                    component={DjangoBridgeLink}
+                    href={page.children_url}
+                    level="body-sm"
+                    underline="none"
+                    aria-label={`Open ${page.title}`}
+                    sx={{ display: "inline-flex" }}
+                  >
+                    <Chip
+                      size="sm"
+                      variant={page.child_count ? "soft" : "outlined"}
+                      color="neutral"
+                      endDecorator={<ChevronRightIcon fontSize="small" />}
                     >
-                      <Chip
-                        size="sm"
-                        variant="soft"
-                        endDecorator={<ChevronRightIcon fontSize="small" />}
-                      >
-                        {page.child_count}
-                      </Chip>
-                    </Link>
-                  ) : (
-                    <Typography level="body-xs">&mdash;</Typography>
-                  )}
+                      {page.child_count || "Open"}
+                    </Chip>
+                  </Link>
                 </td>
                 <td>
                   <Typography level="body-sm">{page.updated_at}</Typography>
@@ -200,7 +219,6 @@ export default function PagesIndexView({
                     </IconButton>
                     <IconButton
                       size="sm"
-                      color="danger"
                       aria-label={`Delete ${page.title}`}
                       onClick={() => openInModal(page.delete_url, "right")}
                     >

@@ -55,6 +55,16 @@ export default function PageFormView({
   return (
     <Layout
       title={page ? page.title || "Untitled" : `New ${content_type}`}
+      subtitle={
+        <Box display="flex" gap={1} alignItems="center" sx={{ mt: 0.5 }}>
+          <Chip size="sm" variant="soft" color="neutral">
+            {content_type}
+          </Chip>
+          <Typography level="body-xs" sx={{ fontFamily: "monospace" }}>
+            {page ? page.path : `${parent_path ?? "/"}\u2026`}
+          </Typography>
+        </Box>
+      }
       breadcrumb={crumbs}
       renderHeaderButtons={
         page
@@ -96,16 +106,7 @@ export default function PageFormView({
           : undefined
       }
     >
-      <Box sx={{ px: overlay ? 0 : { xs: 2, md: 6 } }}>
-        <Box display="flex" gap={1} alignItems="center" pb={1}>
-          <Chip size="sm" variant="soft">
-            {content_type}
-          </Chip>
-          <Typography level="body-xs" sx={{ fontFamily: "monospace" }}>
-            {page ? page.path : `${parent_path ?? "/"}…`}
-          </Typography>
-        </Box>
-
+      <Box sx={{ px: overlay ? 0 : { xs: 2, md: 6 }, pt: overlay ? 0 : 1 }}>
         <Form action={action_url} method="post">
           <input type="hidden" name="csrfmiddlewaretoken" value={csrf_token} />
 
