@@ -2,10 +2,9 @@ import React from "react";
 import styled from "styled-components";
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import Button from "@mui/joy/Button";
-import { showOpenFilePicker } from "show-open-file-picker";
 
 import Layout from "../components/Layout";
-import { Link, NavigationContext } from "@django-bridge/react";
+import { Link, MessagesContext, NavigationContext } from "@django-bridge/react";
 import { CSRFTokenContext } from "../contexts";
 
 const MAX_UPLOAD_SIZE = 4 * 1024 * 1024; // 4MB
@@ -96,7 +95,41 @@ interface FilesIndexViewProps {
 
 export default function FilesIndexView({ files, upload_url }: FilesIndexViewProps) {
   const { refreshProps } = React.useContext(NavigationContext);
+  const { pushMessage } = React.useContext(MessagesContext);
   const csrfToken = React.useContext(CSRFTokenContext);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  // A plain file input rather than showOpenFilePicker(). The File System
+  // Access API is Chromium-only, and the ponyfill we used to call touches
+  // FileSystemHandle at module scope, so merely importing this file threw
+  // "FileSystemHandle is not defined" in Firefox and took the whole admin
+  // down with it. Nothing here wants a file *handle* --- the next thing the
+  // old code did was call getFile() --- so an <input type="file"> is both
+  // simpler and universally supported.
+  const handleFilesChosen = React.useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const chosen = Array.from(event.target.files || []);
+
+      // Reset so picking the same file again still fires a change event
+      event.target.value = "";
+
+      for (const file of chosen) {
+        try {
+          await uploadFile(file, upload_url, csrfToken);
+        } catch {
+          pushMessage({
+            level: "error",
+            text: `Couldn't upload ${file.name}.`,
+          });
+        }
+      }
+
+      if (chosen.length) {
+        void refreshProps();
+      }
+    },
+    [upload_url, csrfToken, refreshProps, pushMessage]
+  );
 
   return (
     <Layout
@@ -107,32 +140,20 @@ export default function FilesIndexView({ files, upload_url }: FilesIndexViewProp
           color="primary"
           startDecorator={<FileUploadIcon />}
           size="sm"
-          onClick={() => {
-            // store a reference to our file handle
-            async function getFile() {
-              // open file picker
-              const fileHandles = await showOpenFilePicker({
-                multiple: true,
-              });
-
-              for (const fileHandle of fileHandles) {
-                fileHandle.getFile().then((file) => {
-                  uploadFile(file, upload_url, csrfToken).then(
-                    () => {
-                      void refreshProps();
-                    },
-                  );
-                });
-              }
-            }
-
-            void getFile();
-          }}
+          onClick={() => fileInputRef.current?.click()}
         >
           Upload
         </Button>
       )}
     >
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={handleFilesChosen}
+      />
+
       <FileListing>
         {files.map((asset) => (
           <li key={asset.id}>
