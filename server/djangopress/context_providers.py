@@ -8,6 +8,7 @@ def urls(request):
         return {
             "pages_index": reverse("pages_index", args=[space.slug]),
             "files_index": reverse("files_index", args=[space.slug]),
+            "content_types_index": reverse("content_types_index", args=[space.slug]),
         }
 
     else:

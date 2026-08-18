@@ -16,7 +16,7 @@ def space_from_url(fn):
         try:
             space = Space.objects.get(users=request.user, slug=space_slug)
         except Space.DoesNotExist:
-            return Http404()
+            raise Http404(f"No space '{space_slug}' available to this user")
         else:
             request.space = space
             return fn(request, *args, **kwargs)

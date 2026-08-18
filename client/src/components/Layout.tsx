@@ -69,7 +69,6 @@ export default function Layout({
   title,
   breadcrumb = [],
   renderHeaderButtons,
-  fullWidth,
   hideHomeBreadcrumb,
   children,
 }: React.PropsWithChildren<LayoutProps>) {
@@ -142,6 +141,8 @@ export default function Layout({
                   color: "white",
                   fontWeight: 500,
                   backgroundColor: {
+                    debug: "#4B5563",
+                    info: "#2E5AAC",
                     success: "#1B8666",
                     warning: "#FAA500",
                     error: "#CA3B3B",

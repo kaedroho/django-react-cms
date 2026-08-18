@@ -1,11 +1,9 @@
 from django import forms
 from django.conf import settings
-from django.forms.models import ModelChoiceIteratorValue
 from django.template.defaultfilters import filesizeformat
 from django_bridge.adapters import Adapter, register
-from telepath import ValueNode
 
-from .widgets import BlockNoteEditor
+from .widgets import BlockNoteEditor, SchemaEditor
 
 
 class TextInputAdapter(Adapter):
@@ -13,25 +11,48 @@ class TextInputAdapter(Adapter):
 
     def js_args(self, widget):
         return [
-            "text",
+            # Let the widget decide its own HTML input type. An explicit
+            # `type` attr wins, which is how DateInput asks for a native date
+            # picker.
+            widget.attrs.get("type", getattr(widget, "input_type", "text")),
             widget.attrs.get("variant", "default"),
         ]
 
 
-register(TextInputAdapter(), forms.TextInput)
+# Django's single-line input widgets are siblings, not subclasses of
+# TextInput, so each needs registering. (DateInput and DateTimeInput *do*
+# subclass TextInput, so they're covered.)
+_text_input_adapter = TextInputAdapter()
+for _widget_class in [
+    forms.TextInput,
+    forms.NumberInput,
+    forms.EmailInput,
+    forms.URLInput,
+    forms.PasswordInput,
+]:
+    register(_text_input_adapter, _widget_class)
 
 
-class PasswordInputAdapter(Adapter):
-    js_constructor = "forms.TextInput"
+class TextareaAdapter(Adapter):
+    js_constructor = "forms.Textarea"
 
     def js_args(self, widget):
         return [
-            "password",
-            widget.attrs.get("variant", "default"),
+            int(widget.attrs.get("rows", 5)),
         ]
 
 
-register(PasswordInputAdapter(), forms.PasswordInput)
+register(TextareaAdapter(), forms.Textarea)
+
+
+class CheckboxInputAdapter(Adapter):
+    js_constructor = "forms.CheckboxInput"
+
+    def js_args(self, widget):
+        return []
+
+
+register(CheckboxInputAdapter(), forms.CheckboxInput)
 
 
 class FileInputAdapter(Adapter):
@@ -69,3 +90,17 @@ class BlockNoteEditorAdapter(Adapter):
 
 
 register(BlockNoteEditorAdapter(), BlockNoteEditor)
+
+
+class SchemaEditorAdapter(Adapter):
+    js_constructor = "forms.SchemaEditor"
+
+    def js_args(self, widget):
+        # The client gets the list of field types from the server, so adding a
+        # field type in djangopress.pages.schema needs no frontend change.
+        from .pages.schema import field_type_choices
+
+        return [field_type_choices()]
+
+
+register(SchemaEditorAdapter(), SchemaEditor)

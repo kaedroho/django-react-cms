@@ -7,7 +7,7 @@ from django.conf import settings
 from . import views
 from .auth import views as auth_views
 from .files import views as files_views
-from .pages import views as pages_views
+from .pages import content_type_views, views as pages_views
 from .utils import decorate_urlpatterns
 from .spaces.decorators import space_from_url
 from .spaces import views as spaces_views
@@ -17,9 +17,42 @@ urlpatterns_space = [
     path("", views.home, name="home"),
     # Pages
     path("pages/", pages_views.index, name="pages_index"),
-    path("pages/add/", pages_views.add, name="pages_add"),
+    path(
+        "pages/choose-type/",
+        pages_views.choose_content_type,
+        name="pages_choose_content_type",
+    ),
+    path("pages/add/<int:content_type_id>/", pages_views.add, name="pages_add"),
     path("pages/<uuid:page_id>/edit/", pages_views.edit, name="pages_edit"),
     path("pages/<uuid:page_id>/delete/", pages_views.delete, name="pages_delete"),
+    path(
+        "pages/<uuid:page_id>/unpublish/",
+        pages_views.unpublish,
+        name="pages_unpublish",
+    ),
+    path(
+        "pages/<uuid:page_id>/revisions/",
+        pages_views.revisions,
+        name="pages_revisions",
+    ),
+    path(
+        "pages/<uuid:page_id>/revisions/<uuid:revision_id>/revert/",
+        pages_views.revert,
+        name="pages_revert",
+    ),
+    # Content types
+    path("content-types/", content_type_views.index, name="content_types_index"),
+    path("content-types/add/", content_type_views.add, name="content_types_add"),
+    path(
+        "content-types/<int:content_type_id>/edit/",
+        content_type_views.edit,
+        name="content_types_edit",
+    ),
+    path(
+        "content-types/<int:content_type_id>/delete/",
+        content_type_views.delete,
+        name="content_types_delete",
+    ),
     # Files
     path("files/", files_views.index, name="files_index"),
     path("files/upload/", files_views.upload, name="files_upload"),

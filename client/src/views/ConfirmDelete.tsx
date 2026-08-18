@@ -10,18 +10,20 @@ interface ConfirmDeleteViewContext {
   objectName: string;
   messageHtml?: string;
   actionUrl: string;
+  confirmLabel?: string;
 }
 
 function ConfirmDeleteView({
   objectName,
   messageHtml,
   actionUrl,
+  confirmLabel,
 }: ConfirmDeleteViewContext) {
   const { overlay, requestClose } = React.useContext(OverlayContext);
   const csrfToken = React.useContext(CSRFTokenContext);
 
   return (
-    <Layout title={`Deleting ${objectName}`}>
+    <Layout title={`${confirmLabel || "Delete"} ${objectName}`}>
       {messageHtml && (
         <Box
           sx={{ marginTop: "1rem" }}
@@ -33,7 +35,9 @@ function ConfirmDeleteView({
         <input type="hidden" name="csrfmiddlewaretoken" value={csrfToken} />
 
         <Box display="flex" gap="12px" pt="20px">
-          <Button type="submit">Delete</Button>
+          <Button type="submit" color="danger">
+            {confirmLabel || "Delete"}
+          </Button>
           {overlay && (
             <Button
               type="button"

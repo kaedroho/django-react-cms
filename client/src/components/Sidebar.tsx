@@ -11,6 +11,7 @@ import Sheet from "@mui/joy/Sheet";
 import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import DashboardRoundedIcon from "@mui/icons-material/DashboardRounded";
 import ImageRoundedIcon from "@mui/icons-material/ImageRounded";
+import SchemaRoundedIcon from "@mui/icons-material/SchemaRounded";
 
 import ColorSchemeToggle from "./ColorSchemeToggle";
 import { closeSidebar } from "../utils";
@@ -129,6 +130,15 @@ export default function Sidebar() {
               <DashboardRoundedIcon />
               <ListItemContent>
                 <Typography level="title-sm">Pages</Typography>
+              </ListItemContent>
+            </ListItemButton>
+          </ListItem>
+
+          <ListItem>
+            <ListItemButton onClick={() => navigate(urls.content_types_index)}>
+              <SchemaRoundedIcon />
+              <ListItemContent>
+                <Typography level="title-sm">Content types</Typography>
               </ListItemContent>
             </ListItemButton>
           </ListItem>
