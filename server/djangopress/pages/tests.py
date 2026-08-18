@@ -16,6 +16,7 @@ from django.urls import reverse
 from django_bridge.test import TestCase
 
 from djangopress.auth.models import User
+from djangopress.pages import paths
 from djangopress.pages.models import Page, PageContentType, PageStatus
 from djangopress.pages.schema import (
     build_form_class,
@@ -126,11 +127,9 @@ class PublishingTestCase(TestCase):
             name="Blog post",
             schema=copy.deepcopy(BLOG_POST_SCHEMA),
         )
-        self.page = Page(
-            space=self.space, content_type=self.content_type, content={}
-        )
+        self.page = Page(space=self.space, content_type=self.content_type, content={})
         self.page.update_content({"fields": {"title": "First post"}})
-        self.page.set_slug_from_title()
+        self.page.place_under("/")
         self.page.save()
 
     def test_a_new_page_is_a_draft(self):
@@ -194,10 +193,11 @@ class PublishingTestCase(TestCase):
     def test_slugs_do_not_collide(self):
         other = Page(space=self.space, content_type=self.content_type, content={})
         other.update_content({"fields": {"title": "First post"}})
-        other.set_slug_from_title()
+        other.place_under("/")
         other.save()
 
         self.assertEqual(other.slug, "first-post-2")
+        self.assertEqual(other.path, "/first-post-2/")
 
 
 class PageViewsTestCase(TestCase):
@@ -220,8 +220,10 @@ class PageViewsTestCase(TestCase):
 
         # response.props holds the Python objects the view passed to React
         form = response.props["form"]
+        # Schema fields in schema order, then the editor's own slug field
         self.assertEqual(
-            list(form.fields), ["title", "summary", "body", "published_on", "featured"]
+            list(form.fields),
+            ["title", "summary", "body", "published_on", "featured", "slug"],
         )
 
     def test_save_draft_creates_an_unpublished_page(self):
@@ -273,7 +275,7 @@ class PageViewsTestCase(TestCase):
         )
         page = Page(space=other_space, content_type=other_type, content={})
         page.update_content({"fields": {"title": "Secret"}})
-        page.set_slug_from_title()
+        page.place_under("/")
         page.save()
 
         response = self.client.get(reverse("pages_index", args=[self.space.slug]))
@@ -354,3 +356,360 @@ class ContentTypeViewsTestCase(TestCase):
 
         self.assertEqual(PageContentType.objects.count(), 1)
         self.assertIn("name", response.props["form"].errors)
+
+
+class PathHelpersTestCase(TestCase):
+    def test_normalise(self):
+        for raw, expected in [
+            ("", "/"),
+            ("/", "/"),
+            ("blog", "/blog/"),
+            ("/blog", "/blog/"),
+            ("blog/", "/blog/"),
+            ("//blog///posts//", "/blog/posts/"),
+        ]:
+            self.assertEqual(paths.normalise(raw), expected, raw)
+
+    def test_depth(self):
+        self.assertEqual(paths.depth("/"), 0)
+        self.assertEqual(paths.depth("/blog/"), 1)
+        self.assertEqual(paths.depth("/blog/hello/"), 2)
+
+    def test_parent_of(self):
+        self.assertIsNone(paths.parent_of("/"))
+        self.assertEqual(paths.parent_of("/blog/"), "/")
+        self.assertEqual(paths.parent_of("/blog/hello/"), "/blog/")
+
+    def test_ancestors_of(self):
+        self.assertEqual(paths.ancestors_of("/a/b/c/"), ["/", "/a/", "/a/b/"])
+        self.assertEqual(
+            paths.ancestors_of("/a/b/c/", inclusive=True),
+            ["/", "/a/", "/a/b/", "/a/b/c/"],
+        )
+        self.assertEqual(paths.ancestors_of("/"), ["/"])
+
+    def test_trailing_slash_stops_prefix_bleed(self):
+        """
+        The reason paths always end in a slash: without it, "/blog" is a
+        prefix of "/blogging" and the descendant query would be wrong.
+        """
+        self.assertFalse(paths.is_descendant_of("/blogging/", "/blog/"))
+        self.assertTrue(paths.is_descendant_of("/blog/post/", "/blog/"))
+        self.assertFalse(paths.is_descendant_of("/blog/", "/blog/"))
+
+
+class PageTreeTestCase(TestCase):
+    def setUp(self):
+        self.space = Space.objects.create(name="Test", slug="test")
+        self.content_type = PageContentType.objects.create(
+            space=self.space,
+            name="Blog post",
+            schema=copy.deepcopy(BLOG_POST_SCHEMA),
+        )
+
+    def make(self, title, parent_path="/", slug=None):
+        page = Page(space=self.space, content_type=self.content_type, content={})
+        page.update_content({"fields": {"title": title}})
+        page.place_under(parent_path, slug=slug)
+        page.save()
+        return page
+
+    def test_paths_and_depths(self):
+        blog = self.make("Blog")
+        post = self.make("Hello world", blog.path)
+
+        self.assertEqual(blog.path, "/blog/")
+        self.assertEqual(blog.path_depth, 1)
+        self.assertEqual(post.path, "/blog/hello-world/")
+        self.assertEqual(post.path_depth, 2)
+
+    def test_children_and_descendants(self):
+        blog = self.make("Blog")
+        post = self.make("Hello world", blog.path)
+        comment = self.make("A comment", post.path)
+        self.make("Other")
+
+        self.assertEqual(list(blog.get_children()), [post])
+        self.assertEqual(list(blog.get_descendants()), [post, comment])
+        self.assertEqual(list(blog.get_descendants(inclusive=True)), [blog, post, comment])
+
+    def test_prefix_bleed_between_sibling_slugs(self):
+        """"/blogging/" must not come back as a descendant of "/blog/"."""
+        blog = self.make("Blog")
+        self.make("Blogging")
+
+        self.assertEqual(list(blog.get_descendants()), [])
+
+    def test_ancestors_are_one_query_from_the_path_string(self):
+        blog = self.make("Blog")
+        post = self.make("Hello world", blog.path)
+
+        with self.assertNumQueries(1):
+            self.assertEqual(list(post.get_ancestors()), [blog])
+
+    def test_siblings(self):
+        a = self.make("Apples")
+        b = self.make("Bananas")
+        self.make("Nested", a.path)
+
+        self.assertEqual(list(a.get_siblings()), [b])
+        self.assertEqual(list(a.get_siblings(inclusive=True)), [a, b])
+
+    def test_children_are_ordered_by_path(self):
+        self.make("Zebra")
+        self.make("Apple")
+
+        self.assertEqual(
+            [page.slug for page in Page.objects.filter(space=self.space)],
+            ["apple", "zebra"],
+        )
+
+    def test_slugs_only_need_to_be_unique_among_siblings(self):
+        blog = self.make("Blog")
+        news = self.make("News")
+        first = self.make("Hello", blog.path)
+        second = self.make("Hello", news.path)
+
+        self.assertEqual(first.path, "/blog/hello/")
+        self.assertEqual(second.path, "/news/hello/")
+
+    def test_moving_a_page_takes_its_subtree(self):
+        blog = self.make("Blog")
+        news = self.make("News")
+        post = self.make("Hello world", blog.path)
+        nested = self.make("Deeper", post.path)
+
+        post.move_to(news.path)
+
+        post.refresh_from_db()
+        nested.refresh_from_db()
+        self.assertEqual(post.path, "/news/hello-world/")
+        self.assertEqual(nested.path, "/news/hello-world/deeper/")
+        self.assertEqual(nested.path_depth, 3)
+
+    def test_moving_rewrites_the_subtree_in_one_query(self):
+        blog = self.make("Blog")
+        news = self.make("News")
+        post = self.make("Hello", blog.path)
+        for i in range(5):
+            self.make(f"Child {i}", post.path)
+
+        # One UPDATE for self, one for the whole subtree, plus the slug
+        # availability check
+        with self.assertNumQueries(4):
+            post.move_to(news.path)
+
+        # post plus its five children, all now under /news/
+        self.assertEqual(news.get_descendants().count(), 6)
+
+    def test_moving_to_the_root(self):
+        blog = self.make("Blog")
+        post = self.make("Hello", blog.path)
+
+        post.move_to("/")
+
+        self.assertEqual(post.path, "/hello/")
+        self.assertEqual(post.path_depth, 1)
+
+    def test_a_page_cannot_be_moved_inside_itself(self):
+        blog = self.make("Blog")
+        post = self.make("Hello", blog.path)
+
+        with self.assertRaises(ValidationError):
+            blog.move_to(post.path)
+
+        with self.assertRaises(ValidationError):
+            blog.move_to(blog.path)
+
+    def test_moving_under_a_page_that_does_not_exist(self):
+        blog = self.make("Blog")
+
+        with self.assertRaises(ValidationError):
+            blog.move_to("/nowhere/")
+
+    def test_moving_resolves_slug_clashes_at_the_destination(self):
+        blog = self.make("Blog")
+        news = self.make("News")
+        self.make("Hello", news.path)
+        post = self.make("Hello", blog.path)
+
+        post.move_to(news.path)
+
+        self.assertEqual(post.path, "/news/hello-2/")
+
+    def test_renaming_a_slug_moves_the_subtree(self):
+        blog = self.make("Blog")
+        post = self.make("Hello", blog.path)
+
+        blog.change_slug("journal")
+
+        post.refresh_from_db()
+        self.assertEqual(blog.path, "/journal/")
+        self.assertEqual(post.path, "/journal/hello/")
+
+    def test_routing_is_one_exact_match(self):
+        self.make("Blog")
+        post = self.make("Hello world", "/blog/")
+
+        with self.assertNumQueries(1):
+            found = Page.objects.get(space=self.space, path="/blog/hello-world/")
+
+        self.assertEqual(found, post)
+
+
+class PageTreeViewsTestCase(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("editor", password="hunter2")
+        self.space = Space.objects.create(name="Test", slug="test")
+        SpaceUser.objects.create(space=self.space, user=self.user)
+        self.content_type = PageContentType.objects.create(
+            space=self.space,
+            name="Blog post",
+            schema=copy.deepcopy(BLOG_POST_SCHEMA),
+        )
+        self.client.force_login(self.user)
+
+    def make(self, title, parent_path="/"):
+        page = Page(space=self.space, content_type=self.content_type, content={})
+        page.update_content({"fields": {"title": title}})
+        page.place_under(parent_path)
+        page.save()
+        return page
+
+    def index(self, parent=None):
+        url = reverse("pages_index", args=[self.space.slug])
+        return self.client.get(url, {"parent": parent} if parent else {})
+
+    def test_the_listing_shows_one_level_at_a_time(self):
+        blog = self.make("Blog")
+        self.make("Hello", blog.path)
+        self.make("News")
+
+        response = self.index()
+
+        self.assertEqual(
+            sorted(page["title"] for page in response.props["pages"]),
+            ["Blog", "News"],
+        )
+
+    def test_drilling_into_a_page_shows_its_children(self):
+        blog = self.make("Blog")
+        self.make("Hello", blog.path)
+
+        response = self.index(parent=blog.path)
+
+        self.assertEqual([p["title"] for p in response.props["pages"]], ["Hello"])
+        self.assertEqual(response.props["parent"]["title"], "Blog")
+
+    def test_child_counts_come_back_without_a_query_per_row(self):
+        blog = self.make("Blog")
+        self.make("Hello", blog.path)
+        self.make("World", blog.path)
+        self.make("News")
+
+        response = self.index()
+        counts = {p["title"]: p["child_count"] for p in response.props["pages"]}
+
+        self.assertEqual(counts, {"Blog": 2, "News": 0})
+
+    def test_breadcrumb_walks_back_to_the_root(self):
+        blog = self.make("Blog")
+        post = self.make("Hello", blog.path)
+
+        response = self.index(parent=post.path)
+
+        self.assertEqual(
+            [crumb["label"] for crumb in response.props["breadcrumb"]],
+            ["Root", "Blog", "Hello"],
+        )
+
+    def test_browsing_a_path_that_no_longer_exists_redirects_to_the_root(self):
+        response = self.index(parent="/gone/")
+
+        self.assertEqual(response["X-DjangoBridge-Action"], "redirect")
+
+    def test_adding_a_page_under_a_parent(self):
+        blog = self.make("Blog")
+
+        url = reverse("pages_add", args=[self.space.slug, self.content_type.id])
+        self.client.post(f"{url}?parent={blog.path}", {"title": "Nested"})
+
+        page = Page.objects.get(space=self.space, title="Nested")
+        self.assertEqual(page.path, "/blog/nested/")
+
+    def test_editing_the_slug_moves_the_subtree(self):
+        blog = self.make("Blog")
+        post = self.make("Hello", blog.path)
+
+        self.client.post(
+            reverse("pages_edit", args=[self.space.slug, str(blog.id)]),
+            {"title": "Blog", "slug": "journal"},
+        )
+
+        post.refresh_from_db()
+        self.assertEqual(post.path, "/journal/hello/")
+
+    def test_moving_via_the_move_view(self):
+        blog = self.make("Blog")
+        news = self.make("News")
+        post = self.make("Hello", blog.path)
+
+        self.client.post(
+            reverse("pages_move", args=[self.space.slug, str(post.id)]),
+            {"destination": news.path},
+        )
+
+        post.refresh_from_db()
+        self.assertEqual(post.path, "/news/hello/")
+
+    def test_the_move_view_hides_the_pages_own_subtree(self):
+        blog = self.make("Blog")
+        post = self.make("Hello", blog.path)
+
+        response = self.client.get(
+            reverse("pages_move", args=[self.space.slug, str(blog.id)])
+        )
+        offered = {candidate["path"] for candidate in response.props["candidates"]}
+
+        self.assertNotIn(blog.path, offered)
+        self.assertNotIn(post.path, offered)
+        self.assertIn("/", offered)
+
+    def test_an_invalid_move_is_reported_rather_than_crashing(self):
+        blog = self.make("Blog")
+        post = self.make("Hello", blog.path)
+
+        response = self.client.post(
+            reverse("pages_move", args=[self.space.slug, str(blog.id)]),
+            {"destination": post.path},
+        )
+
+        blog.refresh_from_db()
+        self.assertEqual(blog.path, "/blog/")
+        self.assertIsNotNone(response.props["error"])
+
+    def test_deleting_a_page_deletes_its_subtree(self):
+        blog = self.make("Blog")
+        self.make("Hello", blog.path)
+        self.make("News")
+
+        self.client.post(
+            reverse("pages_delete", args=[self.space.slug, str(blog.id)])
+        )
+
+        self.assertEqual(
+            [page.path for page in Page.objects.filter(space=self.space)], ["/news/"]
+        )
+
+    def test_a_content_type_cannot_claim_a_reserved_field_name(self):
+        response = self.client.post(
+            reverse("content_types_add", args=[self.space.slug]),
+            {
+                "name": "Clashing",
+                "schema": json.dumps(
+                    {"fields": [{"name": "slug", "type": "text"}]}
+                ),
+            },
+        )
+
+        self.assertIn("schema", response.props["form"].errors)

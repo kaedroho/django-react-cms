@@ -1,12 +1,15 @@
 import * as React from "react";
 import Button from "@mui/joy/Button";
 import Box from "@mui/joy/Box";
+import Chip from "@mui/joy/Chip";
 import Typography from "@mui/joy/Typography";
 import HistoryIcon from "@mui/icons-material/History";
+import DriveFileMoveIcon from "@mui/icons-material/DriveFileMove";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import { Form, NavigationContext, OverlayContext } from "@django-bridge/react";
 
 import FormDef from "../deserializers/Form";
-import { Page } from "../types";
+import { Crumb, Page } from "../types";
 import Layout from "../components/Layout";
 import ModalWindow from "../components/ModalWindow";
 import StatusChip from "../components/StatusChip";
@@ -14,6 +17,8 @@ import { CSRFTokenContext, URLsContext } from "../contexts";
 
 interface PageFormViewProps {
   page: Page | null;
+  parent_path: string | null;
+  breadcrumb?: Crumb[];
   content_type: string;
   action_url: string;
   form: FormDef;
@@ -21,38 +26,68 @@ interface PageFormViewProps {
 
 export default function PageFormView({
   page,
+  parent_path,
+  breadcrumb,
   content_type,
   action_url,
   form,
 }: PageFormViewProps) {
   const { overlay, requestClose } = React.useContext(OverlayContext);
-  const { openOverlay, refreshProps } = React.useContext(NavigationContext);
+  const { openOverlay, refreshProps, navigate } =
+    React.useContext(NavigationContext);
   const csrf_token = React.useContext(CSRFTokenContext);
   const urls = React.useContext(URLsContext);
+
+  const openInModal = React.useCallback(
+    (url: string, slideout?: "left" | "right") =>
+      openOverlay(
+        url,
+        (content) => <ModalWindow slideout={slideout}>{content}</ModalWindow>,
+        { onClose: () => refreshProps() }
+      ),
+    [openOverlay, refreshProps]
+  );
+
+  const crumbs = breadcrumb
+    ? [...breadcrumb.map((c) => ({ label: c.label, href: c.url })), { label: "" }]
+    : [{ label: "Pages", href: urls.pages_index }, { label: "" }];
 
   return (
     <Layout
       title={page ? page.title || "Untitled" : `New ${content_type}`}
-      breadcrumb={[{ label: "Pages", href: urls.pages_index }, { label: "" }]}
+      breadcrumb={crumbs}
       renderHeaderButtons={
         page
           ? () => (
-              <Box display="flex" gap={1} alignItems="center">
+              <Box display="flex" gap={1} alignItems="center" flexWrap="wrap">
                 <StatusChip status={page.status} label={page.status_label} />
+                {!!page.child_count && (
+                  <Button
+                    size="sm"
+                    variant="outlined"
+                    color="neutral"
+                    endDecorator={<ChevronRightIcon />}
+                    onClick={() => navigate(page.children_url)}
+                  >
+                    {page.child_count} child
+                    {page.child_count === 1 ? "" : "ren"}
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outlined"
+                  color="neutral"
+                  startDecorator={<DriveFileMoveIcon />}
+                  onClick={() => openInModal(page.move_url)}
+                >
+                  Move
+                </Button>
                 <Button
                   size="sm"
                   variant="outlined"
                   color="neutral"
                   startDecorator={<HistoryIcon />}
-                  onClick={() =>
-                    openOverlay(
-                      page.revisions_url,
-                      (content) => (
-                        <ModalWindow slideout="right">{content}</ModalWindow>
-                      ),
-                      { onClose: () => refreshProps() }
-                    )
-                  }
+                  onClick={() => openInModal(page.revisions_url, "right")}
                 >
                   History
                 </Button>
@@ -62,9 +97,14 @@ export default function PageFormView({
       }
     >
       <Box sx={{ px: overlay ? 0 : { xs: 2, md: 6 } }}>
-        <Typography level="body-xs" sx={{ textTransform: "uppercase" }}>
-          {content_type}
-        </Typography>
+        <Box display="flex" gap={1} alignItems="center" pb={1}>
+          <Chip size="sm" variant="soft">
+            {content_type}
+          </Chip>
+          <Typography level="body-xs" sx={{ fontFamily: "monospace" }}>
+            {page ? page.path : `${parent_path ?? "/"}…`}
+          </Typography>
+        </Box>
 
         <Form action={action_url} method="post">
           <input type="hidden" name="csrfmiddlewaretoken" value={csrf_token} />
@@ -88,15 +128,7 @@ export default function PageFormView({
                 type="button"
                 variant="plain"
                 color="danger"
-                onClick={() =>
-                  openOverlay(
-                    page.unpublish_url,
-                    (content) => (
-                      <ModalWindow slideout="right">{content}</ModalWindow>
-                    ),
-                    { onClose: () => refreshProps() }
-                  )
-                }
+                onClick={() => openInModal(page.unpublish_url, "right")}
               >
                 Unpublish
               </Button>

@@ -260,6 +260,11 @@ FIELD_TYPES = {
 }
 
 
+# Names the page editor uses for its own fields, so a content type can't
+# claim them.
+RESERVED_FIELD_NAMES = {"slug", "publish"}
+
+
 def default_label(name):
     return name.replace("_", " ").capitalize()
 
@@ -309,6 +314,10 @@ def validate_schema(schema):
             )
         if name in seen:
             raise ValidationError(f"Duplicate field name: '{name}'")
+        if name in RESERVED_FIELD_NAMES:
+            raise ValidationError(
+                f"'{name}' is reserved by the page editor. Pick another name."
+            )
         seen.add(name)
 
         get_field_type(field_def.get("type"))
@@ -347,12 +356,16 @@ def resolve_title_field(schema):
     return None
 
 
-def build_form_class(content_type):
+def build_form_class(content_type, include_slug=False):
     """
     Builds a Django ``Form`` subclass from a content type's schema.
 
     The returned class is a completely ordinary form: it validates, it renders,
     and Django Bridge serialises it to the client like any other.
+
+    ``include_slug`` appends the page editor's own slug field, which isn't part
+    of the content type. It goes last so that content fields stay in schema
+    order.
     """
     schema = content_type.schema
     attrs = {}
@@ -360,6 +373,17 @@ def build_form_class(content_type):
     for field_def in schema.get("fields", []):
         field_type = get_field_type(field_def.get("type"))
         attrs[field_def["name"]] = field_type.build_form_field(field_def)
+
+    if include_slug:
+        attrs["slug"] = forms.SlugField(
+            label="Slug",
+            required=False,
+            help_text=(
+                "The last segment of this page's URL. Changing it moves every "
+                "page underneath it too. Leave blank to generate one from the "
+                "title."
+            ),
+        )
 
     form_class = type(
         f"{content_type.name.title().replace(' ', '')}Form", (forms.Form,), attrs

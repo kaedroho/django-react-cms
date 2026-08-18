@@ -6,8 +6,8 @@ contributor running ``make setup`` should land on something they can poke at.
 """
 
 from django.core.management.base import BaseCommand
-from django.utils.text import slugify
 
+from djangopress.pages import paths
 from djangopress.pages.models import Page, PageContentType
 from djangopress.spaces.models import Space
 
@@ -95,9 +95,36 @@ CONTENT_TYPES = {
 }
 
 
+# (content type, parent path, slug, fields, publish)
 PAGES = [
     (
+        "Landing page",
+        "/",
+        "home",
+        {
+            "heading": "Djangopress",
+            "intro": rich_text(
+                "A small CMS built to show what Django Bridge is like to work with."
+            ),
+            "cta_label": "Read the docs",
+            "cta_url": "https://django-bridge.org",
+        },
+        True,
+    ),
+    (
+        "Landing page",
+        "/",
+        "blog",
+        {
+            "heading": "Blog",
+            "intro": rich_text("Notes on building this thing."),
+        },
+        True,
+    ),
+    (
         "Blog post",
+        "/blog/",
+        None,
         {
             "title": "Why we built a CMS on Django Bridge",
             "summary": "No REST API, no GraphQL schema, no client-side form generator.",
@@ -114,6 +141,8 @@ PAGES = [
     ),
     (
         "Blog post",
+        "/blog/",
+        None,
         {
             "title": "Drafts, revisions and publishing",
             "summary": "Two submit buttons on one plain Django form.",
@@ -128,18 +157,18 @@ PAGES = [
     ),
     (
         "Landing page",
+        "/",
+        "events",
         {
-            "heading": "Djangopress",
-            "intro": rich_text(
-                "A small CMS built to show what Django Bridge is like to work with."
-            ),
-            "cta_label": "Read the docs",
-            "cta_url": "https://django-bridge.org",
+            "heading": "Events",
+            "intro": rich_text("Where to find us."),
         },
         True,
     ),
     (
         "Event",
+        "/events/",
+        None,
         {
             "name": "Djangopress community call",
             "location": "Online",
@@ -148,6 +177,19 @@ PAGES = [
             "details": rich_text("A monthly catch-up. Everyone welcome."),
         },
         False,
+    ),
+    (
+        "Event",
+        "/events/",
+        None,
+        {
+            "name": "Sprint week",
+            "location": "Bristol",
+            "format": "hybrid",
+            "capacity": 40,
+            "details": rich_text("Five days of hacking on Django Bridge."),
+        },
+        True,
     ),
 ]
 
@@ -186,18 +228,18 @@ class Command(BaseCommand):
                 f"{'Created' if created else 'Updated'} content type: {name}"
             )
 
-        for type_name, fields, publish in PAGES:
+        for type_name, parent_path, slug, fields, publish in PAGES:
             content_type = content_types[type_name]
-            title = fields[next(iter(fields))]
-            slug = slugify(title)
-
-            if Page.objects.filter(space=space, slug=slug).exists():
-                self.stdout.write(f"Skipping existing page: {title}")
-                continue
 
             page = Page(space=space, content_type=content_type, content={})
             page.update_content({"fields": fields})
-            page.set_slug_from_title()
+            wanted = paths.join(parent_path, slug or paths.suggest_slug(page.title))
+
+            if Page.objects.filter(space=space, path=wanted).exists():
+                self.stdout.write(f"Skipping existing page: {wanted}")
+                continue
+
+            page.place_under(parent_path, slug=slug)
             page.save()
             page.save_revision()
 
@@ -212,6 +254,6 @@ class Command(BaseCommand):
                 page.save()
                 page.save_revision()
 
-            self.stdout.write(f"Created page: {page.title} ({page.status_label})")
+            self.stdout.write(f"Created page: {page.path} ({page.status_label})")
 
         self.stdout.write(self.style.SUCCESS(f"Demo content ready in '{space.slug}'."))

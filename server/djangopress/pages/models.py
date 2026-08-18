@@ -1,10 +1,13 @@
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.functions import Concat, Substr
 from django.utils import timezone
-from django.utils.text import slugify
 from uuid_extensions import uuid7
 
 from djangopress.spaces.models import Space
+
+from . import paths
 
 
 __all__ = ["PageContentType", "Page", "PageRevision", "PageStatus"]
@@ -38,7 +41,7 @@ class PageContentType(models.Model):
     def __str__(self):
         return self.name
 
-    def get_form_class(self):
+    def get_form_class(self, include_slug=False):
         """
         Builds a Django Form class from this content type's schema.
 
@@ -46,7 +49,7 @@ class PageContentType(models.Model):
         """
         from .schema import build_form_class
 
-        return build_form_class(self)
+        return build_form_class(self, include_slug=include_slug)
 
     @property
     def field_count(self):
@@ -58,6 +61,39 @@ class PageStatus(models.TextChoices):
     LIVE = "live", "Live"
     LIVE_PLUS_DRAFT = "live+draft", "Live + draft"
     UNPUBLISHED = "unpublished", "Unpublished"
+
+
+class PageQuerySet(models.QuerySet):
+    """
+    Tree queries, all of them expressed against ``path`` and ``path_depth``.
+
+    See ``djangopress.pages.paths`` for why paths always carry a trailing
+    slash --- the prefix matching below depends on it.
+    """
+
+    def children_of(self, path):
+        path = paths.normalise(path)
+        return self.filter(
+            path__startswith=path, path_depth=paths.depth(path) + 1
+        )
+
+    def descendants_of(self, path, inclusive=False):
+        path = paths.normalise(path)
+        queryset = self.filter(path__startswith=path)
+        return queryset if inclusive else queryset.exclude(path=path)
+
+    def ancestors_of(self, path, inclusive=False):
+        # No prefix scan and no recursion: the ancestor paths are derivable
+        # from the path string, so this is a single indexed IN lookup.
+        return self.filter(path__in=paths.ancestors_of(path, inclusive=inclusive))
+
+    def siblings_of(self, path, inclusive=False):
+        parent_path = paths.parent_of(path)
+        if parent_path is None:
+            return self.none()
+
+        queryset = self.children_of(parent_path)
+        return queryset if inclusive else queryset.exclude(path=paths.normalise(path))
 
 
 class Page(models.Model):
@@ -72,8 +108,16 @@ class Page(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid7)
     space = models.ForeignKey(Space, on_delete=models.CASCADE, related_name="pages")
+
+    # The full URL path within the space, with a leading and trailing slash.
+    # This is the page's identity: serving a request is one exact-match lookup.
     path = models.TextField()
+    # Number of segments in `path`. Denormalised so that "children of X" is an
+    # indexed prefix scan plus an equality check rather than a LIKE that has to
+    # count slashes.
+    path_depth = models.PositiveIntegerField(default=0)
     slug = models.SlugField(max_length=255, default="")
+
     content_type = models.ForeignKey(
         PageContentType, on_delete=models.CASCADE, related_name="pages"
     )
@@ -103,45 +147,147 @@ class Page(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = PageQuerySet.as_manager()
+
     class Meta:
         db_table = "djangopress_page"
         unique_together = [("space", "path")]
-        ordering = ["-updated_at"]
+        # Manual sibling ordering is deliberately not supported --- with paths
+        # as identity there's nowhere to hang it. Children come back in path
+        # order, which means the listing and the site agree.
+        ordering = ["path"]
+        indexes = [
+            models.Index(fields=["space", "path_depth"]),
+        ]
+        # NOTE: on PostgreSQL, `path__startswith` compiles to LIKE 'x%', which
+        # a plain B-tree index won't serve under a non-C collation. If the
+        # descendant queries ever get hot, add:
+        #   CREATE INDEX ... ON djangopress_page (path text_pattern_ops);
+        # The exact-match routing lookup is already covered by the unique
+        # constraint on (space, path).
 
     def __str__(self):
         return self.title
 
-    # -- Content -----------------------------------------------------------
+    # -- Tree --------------------------------------------------------------
 
-    def update_content(self, content):
-        """Set the draft content, and keep the derived title and path in sync."""
-        from .schema import content_to_title
+    def get_parent(self):
+        parent_path = paths.parent_of(self.path)
+        if parent_path is None:
+            return None
+        return Page.objects.filter(space=self.space, path=parent_path).first()
 
-        self.content = content
-        self.title = content_to_title(self.content_type, content)
+    def get_children(self):
+        return Page.objects.filter(space=self.space).children_of(self.path)
 
-        if not self.slug:
-            self.set_slug_from_title()
+    def get_descendants(self, inclusive=False):
+        return Page.objects.filter(space=self.space).descendants_of(
+            self.path, inclusive=inclusive
+        )
 
-        self.path = self.slug
+    def get_ancestors(self, inclusive=False):
+        return Page.objects.filter(space=self.space).ancestors_of(
+            self.path, inclusive=inclusive
+        )
 
-    def set_slug_from_title(self):
-        base = slugify(self.title) or "page"
-        slug = base
+    def get_siblings(self, inclusive=False):
+        return Page.objects.filter(space=self.space).siblings_of(
+            self.path, inclusive=inclusive
+        )
 
-        existing = set(
+    def place_under(self, parent_path, slug=None):
+        """
+        Set this page's slug, path and depth from a parent path.
+
+        Does not touch descendants --- use :meth:`move_to` for that.
+        """
+        parent_path = paths.normalise(parent_path)
+        slug = slug or self.slug or paths.suggest_slug(self.title)
+        slug = self.find_available_slug(parent_path, slug)
+
+        self.slug = slug
+        self.path = paths.join(parent_path, slug)
+        self.path_depth = paths.depth(self.path)
+
+        return self.path
+
+    def find_available_slug(self, parent_path, slug):
+        """Append -2, -3... until the resulting path is free among siblings."""
+        base = paths.suggest_slug(slug)
+        taken = set(
             Page.objects.filter(space=self.space)
+            .children_of(parent_path)
             .exclude(pk=self.pk)
             .values_list("slug", flat=True)
         )
 
+        candidate = base
         suffix = 2
-        while slug in existing:
-            slug = f"{base}-{suffix}"
+        while candidate in taken:
+            candidate = f"{base}-{suffix}"
             suffix += 1
 
-        self.slug = slug
-        self.path = slug
+        return candidate
+
+    def move_to(self, parent_path, slug=None):
+        """
+        Move this page (and its whole subtree) under ``parent_path``.
+
+        The subtree is rewritten in a single UPDATE: every descendant's path
+        has the old prefix swapped for the new one, and its depth shifted by
+        the same delta.
+        """
+        parent_path = paths.normalise(parent_path)
+
+        if parent_path != paths.ROOT_PATH and not Page.objects.filter(
+            space=self.space, path=parent_path
+        ).exists():
+            raise ValidationError(f"There is no page at '{parent_path}'.")
+
+        if parent_path == self.path or paths.is_descendant_of(parent_path, self.path):
+            raise ValidationError("A page can't be moved inside itself.")
+
+        old_path = self.path
+        new_path = self.place_under(parent_path, slug)
+
+        if new_path == old_path:
+            return self.path
+
+        self.save(update_fields=["slug", "path", "path_depth", "updated_at"])
+        self._rewrite_subtree(old_path, new_path)
+
+        return self.path
+
+    def change_slug(self, slug):
+        """Rename in place, taking the subtree with it."""
+        return self.move_to(paths.parent_of(self.path) or paths.ROOT_PATH, slug=slug)
+
+    def _rewrite_subtree(self, old_path, new_path):
+        depth_delta = paths.depth(new_path) - paths.depth(old_path)
+
+        # One UPDATE for the whole subtree. Substr is 1-indexed, so
+        # len(old_path) + 1 is the first character after the old prefix.
+        return (
+            Page.objects.filter(space=self.space, path__startswith=old_path)
+            .exclude(pk=self.pk)
+            .update(
+                path=Concat(
+                    models.Value(new_path), Substr("path", len(old_path) + 1)
+                ),
+                path_depth=models.F("path_depth") + depth_delta,
+                # auto_now doesn't fire on a queryset update
+                updated_at=timezone.now(),
+            )
+        )
+
+    # -- Content -----------------------------------------------------------
+
+    def update_content(self, content):
+        """Set the draft content and keep the derived title in sync."""
+        from .schema import content_to_title
+
+        self.content = content
+        self.title = content_to_title(self.content_type, content)
 
     # -- Publishing --------------------------------------------------------
 

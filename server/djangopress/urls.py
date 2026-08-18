@@ -25,6 +25,7 @@ urlpatterns_space = [
     path("pages/add/<int:content_type_id>/", pages_views.add, name="pages_add"),
     path("pages/<uuid:page_id>/edit/", pages_views.edit, name="pages_edit"),
     path("pages/<uuid:page_id>/delete/", pages_views.delete, name="pages_delete"),
+    path("pages/<uuid:page_id>/move/", pages_views.move, name="pages_move"),
     path(
         "pages/<uuid:page_id>/unpublish/",
         pages_views.unpublish,

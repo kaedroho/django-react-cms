@@ -3,10 +3,13 @@ import PostAddIcon from "@mui/icons-material/PostAdd";
 import Table from "@mui/joy/Table";
 import Box from "@mui/joy/Box";
 import Button from "@mui/joy/Button";
+import Chip from "@mui/joy/Chip";
 import IconButton from "@mui/joy/IconButton";
 import Typography from "@mui/joy/Typography";
 import Delete from "@mui/icons-material/Delete";
 import HistoryIcon from "@mui/icons-material/History";
+import DriveFileMoveIcon from "@mui/icons-material/DriveFileMove";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import Link from "@mui/joy/Link";
 import {
   Link as DjangoBridgeLink,
@@ -16,9 +19,12 @@ import {
 import Layout from "../components/Layout";
 import ModalWindow from "../components/ModalWindow";
 import StatusChip from "../components/StatusChip";
-import { Page } from "../types";
+import { Crumb, Page } from "../types";
 
 interface PagesIndexViewProps {
+  parent: Page | null;
+  parent_path: string;
+  breadcrumb: Crumb[];
   pages: Page[];
   choose_content_type_url: string;
   content_types_index_url: string;
@@ -26,12 +32,16 @@ interface PagesIndexViewProps {
 }
 
 export default function PagesIndexView({
+  parent,
+  parent_path,
+  breadcrumb,
   pages,
   choose_content_type_url,
   content_types_index_url,
   has_content_types,
 }: PagesIndexViewProps) {
-  const { openOverlay, refreshProps } = React.useContext(NavigationContext);
+  const { openOverlay, refreshProps, navigate } =
+    React.useContext(NavigationContext);
 
   const openInModal = React.useCallback(
     (url: string, slideout?: "left" | "right") =>
@@ -43,23 +53,50 @@ export default function PagesIndexView({
     [openOverlay, refreshProps]
   );
 
+  // Each level of the tree is its own Django view and its own URL, so the
+  // breadcrumb is just server-rendered links --- no client-side tree state.
+  const crumbs = breadcrumb.map((crumb, i) => ({
+    label: crumb.label,
+    href: i === breadcrumb.length - 1 ? undefined : crumb.url,
+  }));
+
   return (
     <Layout
-      title="Pages"
-      breadcrumb={[{ label: "" }]}
+      title={parent ? parent.title : "Pages"}
+      breadcrumb={crumbs}
       renderHeaderButtons={() => (
-        <Button
-          color="primary"
-          startDecorator={<PostAddIcon />}
-          size="sm"
-          disabled={!has_content_types}
-          onClick={() => openInModal(choose_content_type_url)}
-        >
-          Add Page
-        </Button>
+        <Box display="flex" gap={1} alignItems="center">
+          {/* Buttons get their own onClick from MUI, which would clobber
+              DjangoBridgeLink's --- so navigate explicitly instead. */}
+          {parent && (
+            <Button
+              size="sm"
+              variant="outlined"
+              color="neutral"
+              onClick={() => navigate(parent.edit_url)}
+            >
+              Edit this page
+            </Button>
+          )}
+          <Button
+            color="primary"
+            startDecorator={<PostAddIcon />}
+            size="sm"
+            disabled={!has_content_types}
+            onClick={() => openInModal(choose_content_type_url)}
+          >
+            Add child page
+          </Button>
+        </Box>
       )}
       fullWidth
     >
+      <Box sx={{ px: { xs: 2, md: 6 }, pt: 1 }}>
+        <Typography level="body-xs" sx={{ fontFamily: "monospace" }}>
+          {parent_path}
+        </Typography>
+      </Box>
+
       {!has_content_types && (
         <Box sx={{ px: { xs: 2, md: 6 }, py: 4 }}>
           <Typography level="body-md">
@@ -75,7 +112,11 @@ export default function PagesIndexView({
 
       {has_content_types && !pages.length && (
         <Box sx={{ px: { xs: 2, md: 6 }, py: 4 }}>
-          <Typography level="body-md">No pages yet.</Typography>
+          <Typography level="body-md">
+            {parent
+              ? "This page has no children yet."
+              : "No pages yet."}
+          </Typography>
         </Box>
       )}
 
@@ -91,10 +132,11 @@ export default function PagesIndexView({
           <thead>
             <tr>
               <th>Title</th>
-              <th style={{ width: "20%" }}>Type</th>
-              <th style={{ width: "15%" }}>Status</th>
-              <th style={{ width: "15%" }}>Updated</th>
-              <th style={{ width: "110px" }} aria-label="Actions" />
+              <th style={{ width: "16%" }}>Type</th>
+              <th style={{ width: "13%" }}>Status</th>
+              <th style={{ width: "13%" }}>Children</th>
+              <th style={{ width: "13%" }}>Updated</th>
+              <th style={{ width: "140px" }} aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
@@ -109,7 +151,7 @@ export default function PagesIndexView({
                     {page.title}
                   </Link>
                   <Typography level="body-xs" sx={{ fontFamily: "monospace" }}>
-                    /{page.path}
+                    {page.path}
                   </Typography>
                 </td>
                 <td>
@@ -119,10 +161,36 @@ export default function PagesIndexView({
                   <StatusChip status={page.status} label={page.status_label} />
                 </td>
                 <td>
+                  {page.child_count ? (
+                    <Link
+                      component={DjangoBridgeLink}
+                      href={page.children_url}
+                      level="body-sm"
+                    >
+                      <Chip
+                        size="sm"
+                        variant="soft"
+                        endDecorator={<ChevronRightIcon fontSize="small" />}
+                      >
+                        {page.child_count}
+                      </Chip>
+                    </Link>
+                  ) : (
+                    <Typography level="body-xs">&mdash;</Typography>
+                  )}
+                </td>
+                <td>
                   <Typography level="body-sm">{page.updated_at}</Typography>
                 </td>
                 <td>
                   <Box display="flex" gap={0.5}>
+                    <IconButton
+                      size="sm"
+                      aria-label={`Move ${page.title}`}
+                      onClick={() => openInModal(page.move_url)}
+                    >
+                      <DriveFileMoveIcon />
+                    </IconButton>
                     <IconButton
                       size="sm"
                       aria-label={`History of ${page.title}`}
